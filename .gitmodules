@@ -1,0 +1,6 @@
+[submodule "Claude-to-IM"]
+	path = Claude-to-IM
+	url = https://github.com/PeterTF656/Claude-to-IM.git
+[submodule "Claude-to-IM-skill"]
+	path = Claude-to-IM-skill
+	url = https://github.com/PeterTf656/Claude-to-IM-skill.git
