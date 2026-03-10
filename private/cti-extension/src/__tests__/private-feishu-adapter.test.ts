@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { PrivateFeishuAdapter } from '../feishu/private-feishu-adapter.js';
+import { PrivateFeishuAdapter } from '../feishu/adapter/private-feishu-adapter.js';
 
 type MessageCreateRequest = {
   data: {
@@ -327,5 +327,120 @@ describe('PrivateFeishuAdapter', () => {
       messageCalls.some((call) => call.params.receive_id_type === 'union_id'),
       false,
     );
+  });
+
+  it('performs Contact lookup only for routes that declare userEnrichment and passes enriched fields into the webhook payload', async () => {
+    const contactCalls: Array<{ path: { user_id: string }; params?: { user_id_type?: string } }> = [];
+    const fetchCalls: Array<{ body: string | undefined; url: string }> = [];
+
+    const adapter = new PrivateFeishuAdapter({
+      bridgeSettings: {
+        appId: 'app-id',
+        appSecret: 'app-secret',
+        domain: 'feishu',
+      },
+      fetch: async (url, init) => {
+        fetchCalls.push({
+          body: typeof init?.body === 'string' ? init.body : undefined,
+          url: String(url),
+        });
+
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return 'ok';
+          },
+        };
+      },
+      logger: createNoopLogger(),
+      restClientFactory: () => ({
+        contact: {
+          v3: {
+            user: {
+              async get(request: { path: { user_id: string }; params?: { user_id_type?: string } }) {
+                contactCalls.push(request);
+                return {
+                  data: {
+                    user: {
+                      email: 'ada@example.com',
+                      name: 'Ada Profile',
+                      open_id: 'ou_review',
+                    },
+                  },
+                };
+              },
+            },
+          },
+        },
+        im: {
+          message: {
+            async create() {
+              return { data: { message_id: 'message-1' } };
+            },
+          },
+        },
+      }),
+      settingsLoader: () => ({
+        menuRouteFilePath: '/tmp/menu-routes.json',
+        payload: {
+          enriched: {
+            body: {
+              contact_name: '{{contact_user_name}}',
+              event: '{{event_key}}',
+            },
+            method: 'post',
+            url: 'https://hooks.example.com/enriched',
+            userEnrichment: 'contact_by_open_id',
+          },
+          plain: {
+            body: {
+              contact_name: '{{contact_user_name}}',
+              event: '{{event_key}}',
+            },
+            method: 'post',
+            url: 'https://hooks.example.com/plain',
+          },
+        },
+        source: 'local-json',
+      }),
+    });
+
+    await adapter.handleMenuEvent({
+      event_id: 'evt-enriched-1',
+      event_key: 'enriched',
+      operator: {
+        operator_id: {
+          open_id: 'ou_review',
+        },
+      },
+      tenant_key: 'tenant-enriched',
+    });
+
+    await adapter.handleMenuEvent({
+      event_id: 'evt-plain-1',
+      event_key: 'plain',
+      operator: {
+        operator_id: {
+          open_id: 'ou_plain',
+        },
+      },
+      tenant_key: 'tenant-plain',
+    });
+
+    assert.deepEqual(contactCalls, [
+      {
+        path: { user_id: 'ou_review' },
+        params: { user_id_type: 'open_id' },
+      },
+    ]);
+    assert.deepEqual(JSON.parse(fetchCalls[0]?.body ?? '{}'), {
+      contact_name: 'Ada Profile',
+      event: 'enriched',
+    });
+    assert.deepEqual(JSON.parse(fetchCalls[1]?.body ?? '{}'), {
+      contact_name: '',
+      event: 'plain',
+    });
   });
 });

@@ -100,11 +100,21 @@ Files:
 
 - `private/cti-extension/src/index.ts`
 - `private/cti-extension/src/config/load-private-settings.ts`
-- `private/cti-extension/src/feishu/register-feishu-override.ts`
-- `private/cti-extension/src/feishu/private-feishu-adapter.ts`
-- `private/cti-extension/src/feishu/menu-route-service.ts`
-- `private/cti-extension/src/feishu/menu-payload.ts`
-- `private/cti-extension/src/feishu/menu-notifier.ts`
+- `private/cti-extension/src/feishu/index.ts`
+- `private/cti-extension/src/feishu/adapter/register-feishu-override.ts`
+- `private/cti-extension/src/feishu/adapter/private-feishu-adapter.ts`
+- `private/cti-extension/src/feishu/contact/contact-user-service.ts`
+- `private/cti-extension/src/feishu/routing/menu-route-config.ts`
+- `private/cti-extension/src/feishu/routing/menu-route-service.ts`
+- `private/cti-extension/src/feishu/webhooks/menu-payload.ts`
+- `private/cti-extension/src/feishu/cards/notifier/menu-notifier.ts`
+- `private/cti-extension/src/feishu/cards/content/pending-card.ts`
+- `private/cti-extension/src/feishu/cards/content/result-card.ts`
+- `private/cti-extension/src/feishu/cards/content/fallback-text.ts`
+- `private/cti-extension/src/feishu/domain/contact-user.ts`
+- `private/cti-extension/src/feishu/domain/menu-event.ts`
+- `private/cti-extension/src/feishu/shared/receivers.ts`
+- `private/cti-extension/src/feishu/shared/observability.ts`
 
 What it does:
 
@@ -112,7 +122,7 @@ What it does:
 - logs which config source was selected
 - registers a `feishu` adapter factory override
 - handles Feishu menu events
-- resolves routes, deduplicates events, performs webhook POSTs
+- resolves routes, deduplicates events, performs lazy Contact enrichment when a route requests it, performs webhook POSTs
 - sends Feishu pending/result cards back to the operator
 
 ### 3. Supported runtime wrappers
@@ -185,14 +195,20 @@ This is the important "what references what" chain.
    - references `loadPrivateSettings()`
    - references `registerFeishuOverride()`
    - loads config and registers the override as a side effect
-5. `private/cti-extension/src/feishu/register-feishu-override.ts`
+5. `private/cti-extension/src/feishu/adapter/register-feishu-override.ts`
    - first tries the host API exposed by `private-extension.ts`
    - falls back to the built `claude-to-im` registry import if needed
    - registers the `PrivateFeishuAdapter`
-6. `private/cti-extension/src/feishu/private-feishu-adapter.ts`
+6. `private/cti-extension/src/feishu/adapter/private-feishu-adapter.ts`
    - extends the upstream `FeishuAdapter`
    - imports the Feishu SDK from the sibling skill install
-   - builds a single dispatcher with both inbound message and menu handlers
+   - orchestrates routing, optional Contact lookup, webhook payload building, and Feishu notifier delivery
+7. `private/cti-extension/src/feishu/contact/contact-user-service.ts`
+   - owns Feishu Contact lookup by `open_id` for routes that opt into enrichment
+8. `private/cti-extension/src/feishu/cards/notifier/menu-notifier.ts`
+   - delivers cards to Feishu while keeping card content in `cards/content/`
+9. `private/cti-extension/src/feishu/routing/menu-route-service.ts`
+   - owns route resolution and dedup while `menu-route-config.ts` owns config parsing
 
 ### Menu-event chain
 
@@ -205,12 +221,15 @@ This is the important "what references what" chain.
    - deduplicates by `event_id`
    - resolves the exact `event_key`
    - falls back to `*` if no exact route exists
-5. `MenuNotifier.sendPending()`
+5. If the resolved route declares `userEnrichment: "contact_by_open_id"`
+   - `ContactUserService` fetches richer user info by event `open_id`
+   - lookup failure does not block the route
+6. `MenuNotifier.sendPending()`
    - sends an immediate "in progress" Feishu card
-6. `buildMenuRequestBody()`
-   - expands placeholders like `{{event_key}}`, `{{event_id}}`, and operator fields
-7. The adapter performs the webhook request
-8. `MenuNotifier.sendResult()`
+7. `buildMenuRequestBody()`
+   - expands placeholders like `{{event_key}}`, `{{event_id}}`, operator fields, and optional Contact user fields
+8. The adapter performs the webhook request
+9. `MenuNotifier.sendResult()`
    - sends a second Feishu card with success/failure status and response preview
 
 ## Runtime Flow
@@ -240,6 +259,7 @@ Feishu menu click
   -> application.bot.menu_v6
   -> PrivateFeishuAdapter.handleMenuEvent()
   -> MenuRouteService.resolve(event_key)
+  -> ContactUserService.getByOpenId(open_id) when route.userEnrichment requires it
   -> send pending card
   -> POST configured webhook
   -> send result card
@@ -267,7 +287,8 @@ Example shape:
   },
   "testing-menu-key": {
     "url": "http://127.0.0.1:8787/menu/testing-menu-key",
-    "method": "POST"
+    "method": "POST",
+    "userEnrichment": "contact_by_open_id"
   },
   "*": "http://127.0.0.1:8787/menu/fallback"
 }
@@ -278,6 +299,11 @@ Resolution order:
 1. exact `event_key`
 2. wildcard `*`
 3. no route -> ignore event
+
+Optional per-route policy:
+
+- `userEnrichment: "contact_by_open_id"` means the adapter should perform a Feishu Contact user lookup by event `open_id` before building the webhook payload
+- if that lookup fails, menu handling still continues with the direct event fields only
 
 ### Current explicit testing route
 
@@ -295,8 +321,9 @@ For each new Feishu testing menu item:
 2. point it to either:
    - a safe public capture endpoint for live testing
    - or a local harness endpoint for smoke tests
-3. keep `*` in place as a guardrail for unknown keys
-4. restart through `private/runtime/bridge.(sh|ps1)` if the service is already running
+3. add `userEnrichment: "contact_by_open_id"` only when that key actually needs richer profile data
+4. keep `*` in place as a guardrail for unknown keys
+5. restart through `private/runtime/bridge.(sh|ps1)` if the service is already running
 
 This is the intended customization mechanism. Do not hardcode new testing keys into the adapter.
 
@@ -321,6 +348,7 @@ When `CTI_FEISHU_MENU_DEBUG=1` is set, the private adapter emits explicit trace 
 - dispatcher registration
 - menu event receipt
 - route resolution
+- Contact user lookup
 - webhook start and completion
 - pending card delivery
 - result card delivery
@@ -390,5 +418,6 @@ That is the production path for long-running service operation and heartbeats.
 - default to editing `private/` and `docs/`
 - use `private/runtime/bridge.(sh|ps1)` for all real service operations
 - add new testing menu keys in route JSON, not in adapter code
+- add per-key user enrichment policy in route JSON, not in adapter code
 - keep child repo deltas minimal and intentional
 - if a future change only affects private Feishu behavior, it probably belongs in `private/cti-extension/`

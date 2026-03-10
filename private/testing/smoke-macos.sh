@@ -6,7 +6,7 @@ UMBRELLA_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER_SCRIPT="$UMBRELLA_ROOT/private/runtime/bridge.sh"
 EXT_PACKAGE_DIR="$UMBRELLA_ROOT/private/cti-extension"
 FIXTURE_FILE="$SCRIPT_DIR/fixtures/feishu-menu-event.json"
-EXTENSION_ADAPTER_MODULE="$EXT_PACKAGE_DIR/dist/feishu/private-feishu-adapter.js"
+EXTENSION_ADAPTER_MODULE="$EXT_PACKAGE_DIR/dist/feishu/adapter/private-feishu-adapter.js"
 
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cti-smoke.XXXXXX")"
 CTI_HOME="$TEMP_ROOT/cti-home"

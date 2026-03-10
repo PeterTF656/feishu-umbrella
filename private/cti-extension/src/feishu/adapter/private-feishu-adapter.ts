@@ -1,13 +1,15 @@
 // @ts-expect-error The extension intentionally loads the SDK from the sibling skill install.
-import * as lark from '../../../../Claude-to-IM-skill/node_modules/@larksuiteoapi/node-sdk/lib/index.js';
-import { FeishuAdapter } from '../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/adapters/feishu-adapter.js';
-import { getBridgeContext } from '../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/context.js';
+import * as lark from '../../../../../Claude-to-IM-skill/node_modules/@larksuiteoapi/node-sdk/lib/index.js';
+import { FeishuAdapter } from '../../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/adapters/feishu-adapter.js';
+import { getBridgeContext } from '../../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/context.js';
 
-import { loadPrivateSettings, type PrivateSettingsLoadResult } from '../config/load-private-settings.js';
-
-import { MenuNotifier, type MenuRestClient } from './menu-notifier.js';
-import { buildMenuRequestBody, type FeishuMenuEvent } from './menu-payload.js';
-import { MenuRouteService } from './menu-route-service.js';
+import { loadPrivateSettings, type PrivateSettingsLoadResult } from '../../config/load-private-settings.js';
+import { MenuNotifier, type MenuRestClient } from '../cards/notifier/menu-notifier.js';
+import { ContactUserService, type ContactUserLookupClient } from '../contact/contact-user-service.js';
+import { MenuRouteService } from '../routing/menu-route-service.js';
+import { isTruthy, safeJson, type MenuDebugDetails } from '../shared/observability.js';
+import { buildMenuRequestBody } from '../webhooks/menu-payload.js';
+import type { FeishuMenuEvent } from '../domain/menu-event.js';
 
 export interface BridgeSettings {
   appId: string;
@@ -35,6 +37,8 @@ export type FetchLike = (
   init?: RequestInit,
 ) => Promise<FetchResponseLike>;
 
+export interface PrivateFeishuRestClient extends MenuRestClient, ContactUserLookupClient {}
+
 export interface PrivateFeishuAdapterOptions {
   botIdentityResolver?: (settings: BridgeSettings) => Promise<void>;
   bridgeSettings?: BridgeSettings;
@@ -43,12 +47,10 @@ export interface PrivateFeishuAdapterOptions {
   fetch?: FetchLike;
   inboundEventHandler?: (data: unknown) => Promise<void>;
   logger?: Pick<Console, 'error' | 'info' | 'log' | 'warn'>;
-  restClientFactory?: (settings: BridgeSettings) => MenuRestClient | null;
+  restClientFactory?: (settings: BridgeSettings) => PrivateFeishuRestClient | null;
   settingsLoader?: () => PrivateSettingsLoadResult;
   wsClientFactory?: (settings: BridgeSettings) => MenuWsClient;
 }
-
-type MenuDebugDetails = Record<string, unknown>;
 
 const DEFAULT_MENU_TIMEOUT_MS = 10_000;
 const MENU_DEBUG_ENV = 'CTI_FEISHU_MENU_DEBUG';
@@ -63,14 +65,15 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
   private readonly fetchFn: FetchLike;
   private readonly inboundEventHandler?: (data: unknown) => Promise<void>;
   private readonly logger: Pick<Console, 'error' | 'info' | 'log' | 'warn'>;
-  private readonly restClientFactory: (settings: BridgeSettings) => MenuRestClient | null;
+  private readonly restClientFactory: (settings: BridgeSettings) => PrivateFeishuRestClient | null;
   private readonly settingsLoader: () => PrivateSettingsLoadResult;
   private readonly wsClientFactory: (settings: BridgeSettings) => MenuWsClient;
 
   private readonly menuRouteService: MenuRouteService;
 
+  private contactUserService: ContactUserService | null = null;
   private menuNotifier: MenuNotifier | null = null;
-  private menuRestClient: MenuRestClient | null = null;
+  private menuRestClient: PrivateFeishuRestClient | null = null;
 
   constructor(options: PrivateFeishuAdapterOptions = {}) {
     super();
@@ -152,6 +155,7 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
   }
 
   async stop(): Promise<void> {
+    this.contactUserService = null;
     this.menuNotifier = null;
     this.menuRestClient = null;
     this.menuRouteService.clearSeenEventIds();
@@ -196,6 +200,7 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
 
     const notifier = this.ensureMenuNotifier(this.resolveBridgeSettings());
     await notifier?.sendPending(event, route.url);
+    const contactUser = await this.resolveContactUser(route, event);
 
     const method = (route.method ?? 'POST').toUpperCase();
     const headers = {
@@ -203,7 +208,7 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
       ...(route.headers ?? {}),
     };
     const timeoutMs = route.timeoutMs ?? DEFAULT_MENU_TIMEOUT_MS;
-    const body = buildMenuRequestBody(route, event);
+    const body = buildMenuRequestBody(route, event, { contactUser });
     const startedAt = Date.now();
 
     this.debug('menu webhook request started', {
@@ -257,12 +262,8 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
       return this.menuNotifier;
     }
 
-    const adapterState = this as any;
-    if (!this.menuRestClient) {
-      this.menuRestClient = adapterState.restClient ?? (bridgeSettings ? this.restClientFactory(bridgeSettings) : null);
-    }
-
-    if (!this.menuRestClient) {
+    const restClient = this.ensureRestClient(bridgeSettings);
+    if (!restClient) {
       this.debug('menu notifier unavailable because rest client is missing');
       return null;
     }
@@ -270,10 +271,63 @@ export class PrivateFeishuAdapter extends FeishuAdapter {
     this.menuNotifier = new MenuNotifier({
       debugLog: (message, details) => this.debug(message, details),
       logger: this.logger,
-      restClient: this.menuRestClient,
+      restClient,
     });
 
     return this.menuNotifier;
+  }
+
+  private ensureContactUserService(bridgeSettings: BridgeSettings | null) {
+    if (this.contactUserService) {
+      return this.contactUserService;
+    }
+
+    const restClient = this.ensureRestClient(bridgeSettings);
+    if (!restClient) {
+      this.debug('contact user service unavailable because rest client is missing');
+      return null;
+    }
+
+    this.contactUserService = new ContactUserService({
+      debugLog: (message, details) => this.debug(message, details),
+      logger: this.logger,
+      restClient,
+    });
+
+    return this.contactUserService;
+  }
+
+  private ensureRestClient(bridgeSettings: BridgeSettings | null) {
+    const adapterState = this as any;
+    if (!this.menuRestClient) {
+      this.menuRestClient = adapterState.restClient ?? (bridgeSettings ? this.restClientFactory(bridgeSettings) : null);
+    }
+
+    return this.menuRestClient;
+  }
+
+  private async resolveContactUser(route: { userEnrichment?: string }, event: FeishuMenuEvent) {
+    if (route.userEnrichment !== 'contact_by_open_id') {
+      return null;
+    }
+
+    const openId = event.operator?.operator_id?.open_id?.trim() ?? '';
+    if (!openId) {
+      this.debug('menu contact enrichment skipped because operator open_id is missing', {
+        event_id: event.event_id ?? null,
+        event_key: event.event_key ?? null,
+      });
+      return null;
+    }
+
+    const contactUser = await this.ensureContactUserService(this.resolveBridgeSettings())?.getByOpenId(openId);
+    this.debug('menu contact enrichment completed', {
+      contact_user_found: !!contactUser,
+      event_id: event.event_id ?? null,
+      event_key: event.event_key ?? null,
+      open_id: openId,
+    });
+    return contactUser ?? null;
   }
 
   private async handleInboundEvent(data: unknown) {
@@ -353,7 +407,7 @@ function createDefaultRestClient(settings: BridgeSettings) {
     appId: settings.appId,
     appSecret: settings.appSecret,
     domain: resolveLarkDomain(settings.domain),
-  }) as MenuRestClient;
+  }) as PrivateFeishuRestClient;
 }
 
 function createDefaultWsClient(settings: BridgeSettings) {
@@ -366,20 +420,4 @@ function createDefaultWsClient(settings: BridgeSettings) {
 
 function resolveLarkDomain(domain: string | undefined) {
   return domain === 'lark' ? lark.Domain.Lark : lark.Domain.Feishu;
-}
-
-function isTruthy(value: string | undefined) {
-  if (!value) {
-    return false;
-  }
-
-  return !['0', 'false', 'no', 'off'].includes(value.trim().toLowerCase());
-}
-
-function safeJson(value: MenuDebugDetails) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '[unserializable]';
-  }
 }

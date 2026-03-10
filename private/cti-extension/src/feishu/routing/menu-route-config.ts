@@ -1,17 +1,13 @@
+export type MenuUserEnrichment = 'contact_by_open_id';
+
 export interface MenuRoute {
   url: string;
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
   timeoutMs?: number;
+  userEnrichment?: MenuUserEnrichment;
 }
-
-export interface MenuRouteServiceOptions {
-  dedupMax?: number;
-  logger?: Pick<Console, 'warn'>;
-}
-
-const DEFAULT_MENU_DEDUP_MAX = 1000;
 
 export function parseMenuRoutes(
   payload: unknown,
@@ -37,62 +33,6 @@ export function parseMenuRoutes(
   return routeMap;
 }
 
-export class MenuRouteService {
-  readonly routes: Map<string, MenuRoute>;
-
-  private readonly dedupMax: number;
-  private readonly seenEventIds = new Map<string, true>();
-
-  constructor(payload: unknown, options: MenuRouteServiceOptions = {}) {
-    this.routes = parseMenuRoutes(payload, options.logger);
-    this.dedupMax = normalizeDedupMax(options.dedupMax);
-  }
-
-  resolve(eventKey: string | null | undefined): MenuRoute | null {
-    const normalizedKey = eventKey?.trim() ?? '';
-
-    if (!normalizedKey) {
-      return null;
-    }
-
-    return this.routes.get(normalizedKey) ?? this.routes.get('*') ?? null;
-  }
-
-  markEventHandled(eventId: string | null | undefined): boolean {
-    const normalizedId = eventId?.trim() ?? '';
-
-    if (!normalizedId) {
-      return true;
-    }
-
-    if (this.seenEventIds.has(normalizedId)) {
-      return false;
-    }
-
-    this.seenEventIds.set(normalizedId, true);
-
-    if (this.seenEventIds.size > this.dedupMax) {
-      const excess = this.seenEventIds.size - this.dedupMax;
-      let removed = 0;
-
-      for (const key of this.seenEventIds.keys()) {
-        this.seenEventIds.delete(key);
-        removed += 1;
-
-        if (removed >= excess) {
-          break;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  clearSeenEventIds() {
-    this.seenEventIds.clear();
-  }
-}
-
 function normalizeMenuRoute(routeValue: unknown): MenuRoute | null {
   if (typeof routeValue === 'string') {
     const url = routeValue.trim();
@@ -112,6 +52,7 @@ function normalizeMenuRoute(routeValue: unknown): MenuRoute | null {
 
   const headers = normalizeHeaders(routeValue.headers);
   const timeoutMs = normalizeTimeout(routeValue.timeoutMs);
+  const userEnrichment = normalizeUserEnrichment(routeValue.userEnrichment);
 
   const route: MenuRoute = { url };
 
@@ -129,6 +70,10 @@ function normalizeMenuRoute(routeValue: unknown): MenuRoute | null {
 
   if (timeoutMs !== undefined) {
     route.timeoutMs = timeoutMs;
+  }
+
+  if (userEnrichment) {
+    route.userEnrichment = userEnrichment;
   }
 
   return route;
@@ -154,12 +99,12 @@ function normalizeTimeout(value: unknown) {
   return Math.floor(value);
 }
 
-function normalizeDedupMax(value: number | undefined) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_MENU_DEDUP_MAX;
+function normalizeUserEnrichment(value: unknown): MenuUserEnrichment | undefined {
+  if (value === 'contact_by_open_id') {
+    return value;
   }
 
-  return Math.floor(value);
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

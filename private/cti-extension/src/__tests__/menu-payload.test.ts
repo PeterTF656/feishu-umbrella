@@ -6,8 +6,8 @@ import {
   buildDefaultMenuPayload,
   buildMenuRequestBody,
   type FeishuMenuEvent,
-} from '../feishu/menu-payload.js';
-import type { MenuRoute } from '../feishu/menu-route-service.js';
+} from '../feishu/webhooks/menu-payload.js';
+import type { MenuRoute } from '../feishu/routing/menu-route-service.js';
 
 const event: FeishuMenuEvent = {
   event_key: 'launch',
@@ -31,18 +31,27 @@ describe('menu-payload', () => {
         key: '{{event_key}}',
         ids: ['{{event_id}}', '{{operator_open_id}}', '{{operator_user_id}}', '{{operator_union_id}}'],
         nested: {
+          contactName: '{{contact_user_name}}',
           timestamp: '{{timestamp}}',
           tenant: '{{tenant_key}}',
           operator: '{{operator_name}}',
         },
       },
       event,
+      {
+        contactUser: {
+          email: 'ada@example.com',
+          name: 'Ada Profile',
+          open_id: 'ou_profile',
+        },
+      },
     );
 
     assert.deepEqual(payload, {
       key: 'launch',
       ids: ['evt-123', 'ou_123', 'u_456', 'on_789'],
       nested: {
+        contactName: 'Ada Profile',
         timestamp: '1700000000000',
         tenant: 'tenant-456',
         operator: 'Ada Lovelace',
@@ -55,11 +64,24 @@ describe('menu-payload', () => {
       url: 'https://hooks.example.com/launch',
     };
 
-    assert.deepEqual(buildDefaultMenuPayload(event), {
+    assert.deepEqual(
+      buildDefaultMenuPayload(event, {
+        contactUser: {
+          email: 'ada@example.com',
+          name: 'Ada Profile',
+          open_id: 'ou_profile',
+        },
+      }),
+      {
       event_key: 'launch',
       event_id: 'evt-123',
       timestamp: 1700000000000,
       tenant_key: 'tenant-456',
+      contact_user: {
+        email: 'ada@example.com',
+        name: 'Ada Profile',
+        open_id: 'ou_profile',
+      },
       operator: {
         name: 'Ada Lovelace',
         open_id: 'ou_123',
@@ -67,11 +89,24 @@ describe('menu-payload', () => {
         union_id: 'on_789',
       },
       raw_event: event,
-    });
+      },
+    );
 
     assert.deepEqual(
-      buildMenuRequestBody(route, event),
-      buildDefaultMenuPayload(event),
+      buildMenuRequestBody(route, event, {
+        contactUser: {
+          email: 'ada@example.com',
+          name: 'Ada Profile',
+          open_id: 'ou_profile',
+        },
+      }),
+      buildDefaultMenuPayload(event, {
+        contactUser: {
+          email: 'ada@example.com',
+          name: 'Ada Profile',
+          open_id: 'ou_profile',
+        },
+      }),
     );
   });
 
@@ -85,7 +120,7 @@ describe('menu-payload', () => {
       {
         event_id: 'evt-no-timestamp',
       },
-      () => 1700001234567,
+      { getNow: () => 1700001234567 },
     );
 
     assert.equal((payload as { timestamp: number }).timestamp, 1700001234567);

@@ -1,11 +1,7 @@
-import type { FeishuMenuEvent } from './menu-payload.js';
-
-export type MenuReceiverType = 'open_id' | 'user_id' | 'union_id';
-
-export interface MenuReceiver {
-  id: string;
-  type: MenuReceiverType;
-}
+import type { FeishuMenuEvent } from '../../domain/menu-event.js';
+import { resolveMenuReceivers, type MenuReceiver, type MenuReceiverType } from '../../shared/receivers.js';
+import { buildPendingCardContent } from '../content/pending-card.js';
+import { buildResultCardContent } from '../content/result-card.js';
 
 export interface MenuMessageCreateRequest {
   data: {
@@ -58,36 +54,8 @@ export class MenuNotifier {
       return;
     }
 
-    const bodyMarkdown = [
-      '⏳ **Working on your request...**',
-      '',
-      `**event_key**: \`${event.event_key ?? ''}\``,
-      `**event_id**: \`${event.event_id ?? ''}\``,
-      `**endpoint**: \`${routeUrl}\``,
-      '',
-      'Sending HTTP request now, result will follow shortly.',
-    ].join('\n');
-
-    const cardJson = JSON.stringify({
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: {
-        template: 'blue',
-        title: { tag: 'plain_text', content: 'Menu Request In Progress' },
-      },
-      body: {
-        elements: [{ tag: 'markdown', content: bodyMarkdown }],
-      },
-    });
-
-    const fallbackText = [
-      'Working on your menu request...',
-      `event_key: ${event.event_key ?? ''}`,
-      `event_id: ${event.event_id ?? ''}`,
-      `endpoint: ${routeUrl}`,
-    ].join('\n');
-
-    const outcome = await this.sendWithFallback(receivers, cardJson, fallbackText);
+    const content = buildPendingCardContent(event, routeUrl);
+    const outcome = await this.sendWithFallback(receivers, content.cardJson, content.fallbackText);
     this.debugLog?.('menu notification delivered', {
       delivered: outcome.delivered,
       msg_type: outcome.msgType ?? null,
@@ -115,42 +83,8 @@ export class MenuNotifier {
       return;
     }
 
-    const responseSnippet = toCardSnippet(responseText, 1200);
-    const bodyMarkdown = [
-      `**event_key**: \`${event.event_key ?? ''}\``,
-      `**event_id**: \`${event.event_id ?? ''}\``,
-      `**status**: \`${statusLabel}\``,
-      `**endpoint**: \`${routeUrl}\``,
-      '',
-      '**endpoint response (trimmed)**',
-      '```',
-      responseSnippet,
-      '```',
-    ].join('\n');
-
-    const cardJson = JSON.stringify({
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: {
-        template: ok ? 'green' : 'red',
-        title: { tag: 'plain_text', content: 'Menu Webhook Result' },
-      },
-      body: {
-        elements: [{ tag: 'markdown', content: bodyMarkdown }],
-      },
-    });
-
-    const fallbackText = [
-      'Menu webhook result',
-      `event_key: ${event.event_key ?? ''}`,
-      `event_id: ${event.event_id ?? ''}`,
-      `status: ${statusLabel}`,
-      `endpoint: ${routeUrl}`,
-      '',
-      `response: ${responseSnippet}`,
-    ].join('\n');
-
-    const outcome = await this.sendWithFallback(receivers, cardJson, fallbackText);
+    const content = buildResultCardContent(event, routeUrl, statusLabel, responseText, ok);
+    const outcome = await this.sendWithFallback(receivers, content.cardJson, content.fallbackText);
     this.debugLog?.('menu notification delivered', {
       delivered: outcome.delivered,
       msg_type: outcome.msgType ?? null,
@@ -221,43 +155,4 @@ export class MenuNotifier {
       return false;
     }
   }
-}
-
-export function resolveMenuReceivers(event: FeishuMenuEvent): MenuReceiver[] {
-  const receivers: MenuReceiver[] = [];
-  const openId = event.operator?.operator_id?.open_id ?? '';
-  const userId = event.operator?.operator_id?.user_id ?? '';
-  const unionId = event.operator?.operator_id?.union_id ?? '';
-
-  if (openId) {
-    receivers.push({ type: 'open_id', id: openId });
-  }
-
-  if (userId) {
-    receivers.push({ type: 'user_id', id: userId });
-  }
-
-  if (unionId) {
-    receivers.push({ type: 'union_id', id: unionId });
-  }
-
-  return receivers;
-}
-
-export function toCardSnippet(raw: string, maxLen: number) {
-  let text = raw;
-
-  try {
-    text = JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    // Keep raw string when the response is not JSON.
-  }
-
-  text = text.replace(/```/g, "'''");
-
-  if (text.length > maxLen) {
-    return `${text.slice(0, maxLen)}\n...`;
-  }
-
-  return text;
 }

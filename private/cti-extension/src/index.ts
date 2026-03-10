@@ -3,7 +3,7 @@ import {
   resolvePrivateExtensionPackageRootDir,
   type LoadPrivateSettingsOptions,
 } from './config/load-private-settings.js';
-import { registerFeishuOverride } from './feishu/register-feishu-override.js';
+import { registerFeishuOverride } from './feishu/index.js';
 
 export interface StartPrivateExtensionOptions extends LoadPrivateSettingsOptions {
   logger?: Pick<Console, 'info'>;
@@ -29,4 +29,4 @@ registerFeishuOverride();
 export const privateSettings = startPrivateExtension();
 
 export { loadPrivateSettings } from './config/load-private-settings.js';
-export { registerFeishuOverride } from './feishu/register-feishu-override.js';
+export { registerFeishuOverride } from './feishu/index.js';

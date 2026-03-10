@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { MenuRouteService, parseMenuRoutes } from '../feishu/menu-route-service.js';
+import { MenuRouteService, parseMenuRoutes } from '../feishu/routing/menu-route-service.js';
 
 describe('menu-route-service', () => {
   it('parses string and object route entries', () => {
@@ -10,6 +10,7 @@ describe('menu-route-service', () => {
       review: {
         url: ' https://hooks.example.com/review ',
         method: 'patch',
+        userEnrichment: 'contact_by_open_id',
         headers: {
           Authorization: 'Bearer token',
           'X-Ignored': 42,
@@ -32,6 +33,7 @@ describe('menu-route-service', () => {
     assert.deepEqual(routes.get('review'), {
       url: 'https://hooks.example.com/review',
       method: 'PATCH',
+      userEnrichment: 'contact_by_open_id',
       headers: {
         Authorization: 'Bearer token',
       },

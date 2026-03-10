@@ -2,91 +2,41 @@
 
 ## Purpose
 
-This document proposes a clearer future structure for `private/cti-extension/src/feishu/`.
+This directory now uses a capability-oriented structure so customization points are visible without reading through the whole adapter.
 
-The goal is not to change runtime behavior now. The goal is to make future customization obvious, especially for:
+The main separation is:
 
-- menu-key receive flow
-- card content and UI
-- card delivery behavior
-- future interactive cards with buttons
-- route resolution
-- webhook request shaping
+- `adapter/`: Feishu platform entry and orchestration
+- `cards/`: user-visible card content and delivery logic
+- `contact/`: Feishu Contact API lookup for optional user enrichment
+- `routing/`: menu-key route parsing and resolution
+- `webhooks/`: webhook payload shaping
+- `domain/`: shared Feishu menu event contracts
+- `shared/`: low-level helpers used across capabilities
 
-This is a proposal for a later refactor, not a live directory migration.
-
-## Current State
-
-The directory is currently flat:
-
-```text
-private/cti-extension/src/feishu/
-  menu-notifier.ts
-  menu-payload.ts
-  menu-route-service.ts
-  private-feishu-adapter.ts
-  register-feishu-override.ts
-```
-
-Current responsibilities:
-
-- `private-feishu-adapter.ts`
-  - registers the Feishu menu event handler
-  - receives menu events
-  - resolves routes
-  - sends the pending card
-  - performs the webhook request
-  - sends the final result card
-- `menu-notifier.ts`
-  - sends Feishu cards and text fallbacks
-  - chooses receiver IDs
-- `menu-route-service.ts`
-  - parses route definitions
-  - resolves exact menu keys and wildcard fallback
-  - deduplicates `event_id`
-- `menu-payload.ts`
-  - builds webhook request payloads
-  - expands placeholders like `{{event_key}}`
-- `register-feishu-override.ts`
-  - registers the private adapter into the bridge registry
-
-## Problem With The Current Layout
-
-The current layout works, but it hides the customization map.
-
-Examples:
-
-- if you want to change Feishu card appearance, the obvious file is not obvious until you inspect notifier code
-- if you want future card button callbacks, there is no explicit architectural home for them
-- if you want to change route matching, the directory does not visually separate routing from card UI
-- if you want to change outbound webhook logic, payload shaping is present but transport policy has no explicit future home
-
-That makes the folder harder to navigate than it needs to be.
-
-## Recommended Future Layout
-
-Use a capability-oriented structure:
+## Current Layout
 
 ```text
 private/cti-extension/src/feishu/
   architecture.md
   index.ts
   adapter/
-    menu-action-controller.ts
     private-feishu-adapter.ts
     register-feishu-override.ts
+  contact/
+    contact-user-service.ts
   cards/
     actions/
       README.md
     content/
+      fallback-text.ts
       pending-card.ts
       result-card.ts
-      fallback-text.ts
     notifier/
       menu-notifier.ts
   domain/
+    contact-user.ts
     menu-event.ts
-    menu-flow.ts
   routing/
     menu-route-config.ts
     menu-route-service.ts
@@ -95,201 +45,199 @@ private/cti-extension/src/feishu/
     receivers.ts
   webhooks/
     menu-payload.ts
-    menu-webhook-client.ts
 ```
 
-This is the recommended target structure for a later refactor.
-
-## Directory Responsibilities
+## What Lives Where
 
 ### `adapter/`
 
-This directory owns the Feishu platform seam.
+`adapter/` owns the Feishu integration seam.
 
-It should contain:
+Files:
 
-- websocket event registration
-- bridge adapter override registration
-- top-level orchestration for Feishu menu-event handling
-- top-level orchestration for future menu-action intents
+- `private-feishu-adapter.ts`
+- `register-feishu-override.ts`
 
-If a future change affects how the event enters the private system, it belongs here.
+Responsibilities:
 
-### `cards/`
+- register the private Feishu adapter with the upstream bridge registry
+- receive Feishu websocket events
+- orchestrate the menu-event flow
+- call routing, webhook payload, and card delivery modules
 
-This directory owns what the Feishu operator sees and how those messages are delivered.
+If you want to change how a menu event enters the private system, start here.
 
-It should be split into three sub-areas.
+### `contact/`
 
-#### `cards/content/`
+`contact/` owns Feishu Contact API integration for optional user enrichment.
 
-This is where card appearance belongs:
+Files:
 
-- pending card body
-- result card body
-- fallback text content
-- future alternate card layouts
+- `contact-user-service.ts`
 
-If you want to change card wording, layout, markdown blocks, or visual structure, this should be the first place to look.
+Responsibilities:
 
-#### `cards/notifier/`
+- perform Contact user lookup by `open_id`
+- isolate Contact API error handling from adapter orchestration
+- keep enrichment best-effort so route handling can continue without profile data
 
-This is where Feishu message delivery behavior belongs:
+If you want to change how richer user info is fetched, start here.
 
-- send card vs text fallback
-- choose receiver types
-- handle send failures
-- keep delivery-specific logging
+### `cards/content/`
 
-This is not the place for card layout definitions. It should deliver prepared content, not own the content design.
+`cards/content/` owns what the Feishu operator sees.
 
-#### `cards/actions/`
+Files:
 
-This is the planned home for future interactive card actions.
+- `pending-card.ts`
+- `result-card.ts`
+- `fallback-text.ts`
 
-Examples:
+Responsibilities:
 
-- button callbacks
-- action payload parsing
-- action-to-domain-intent translation
+- build the pending card content
+- build the result card content
+- build text fallbacks for card delivery failures
 
-Important rule:
+If you want to change wording, markdown, or card layout, start here.
 
-- a card action should not directly own route resolution or webhook transport behavior
-- it should translate the callback into a domain-level intent, then hand off to orchestration logic in `adapter/`
+### `cards/notifier/`
 
-That keeps future interactive cards from turning into unstructured callback code.
+`cards/notifier/` owns how those cards are delivered to Feishu.
+
+Files:
+
+- `menu-notifier.ts`
+
+Responsibilities:
+
+- choose the receiver order
+- attempt interactive card delivery
+- fall back to plain text when needed
+- keep delivery-specific logging isolated from content generation
+
+If you want to change send behavior, fallback behavior, or receiver selection, start here.
+
+### `cards/actions/`
+
+`cards/actions/` is reserved for future interactive card callbacks.
+
+Current state:
+
+- only `README.md` exists
+
+Intent:
+
+- parse future card-button callbacks
+- translate them into domain-level intents
+
+This directory does not own routing or webhook behavior.
 
 ### `routing/`
 
-This directory owns menu-key routing policy.
+`routing/` owns menu-key lookup policy.
 
-It should contain:
+Files:
 
-- route config normalization
-- exact key match
-- wildcard fallback
-- dedup policy
+- `menu-route-config.ts`
+- `menu-route-service.ts`
 
-If you want to change how event keys are resolved, this should be the only place to start.
+Responsibilities:
+
+- normalize route config entries
+- parse route-level enrichment policy such as `userEnrichment`
+- parse route JSON into route objects
+- resolve exact route matches and wildcard fallback
+- deduplicate `event_id`
+
+If you want to change how menu keys resolve, start here.
 
 ### `webhooks/`
 
-This directory owns outbound HTTP request concerns.
+`webhooks/` owns outbound webhook payload shaping.
 
-It should contain:
+Files:
 
-- request payload shaping
-- future webhook transport logic
-- future retry or auth policy
-- response normalization if needed later
+- `menu-payload.ts`
 
-This keeps outbound network behavior separate from both route policy and card presentation.
+Responsibilities:
+
+- build the default webhook payload
+- expand placeholder values into route-specific request bodies
+- expose optional `contact_user` data when route-scoped enrichment succeeded
+
+If you want to change the JSON sent to the webhook, start here.
 
 ### `domain/`
 
-This directory owns shared menu-flow contracts.
+`domain/` owns the shared event contract.
 
-It should contain:
+Files:
 
-- Feishu menu event types
-- flow result types
-- future button action intent types
+- `contact-user.ts`
+- `menu-event.ts`
 
-This is where shared types should live so `adapter/`, `cards/`, `routing/`, and `webhooks/` do not invent incompatible local shapes.
+Responsibilities:
+
+- define the Feishu menu event shape used across adapter, cards, routing, and webhooks
+- define the optional Contact user profile shape shared between `contact/` and `webhooks/`
 
 ### `shared/`
 
-This directory owns cross-cutting helpers that do not define a business area by themselves.
+`shared/` owns low-level helpers used by multiple capabilities.
 
-Examples:
+Files:
 
-- receiver resolution
-- observability helpers
+- `observability.ts`
+- `receivers.ts`
 
-If a helper is generic inside the Feishu private layer and does not belong clearly to cards, routing, or webhooks, it belongs here.
+Responsibilities:
+
+- menu debug serialization and truthy-env parsing
+- receiver extraction from Feishu event data
 
 Guardrail:
 
-- `shared/` is not a fallback home for business logic
-- if a module owns menu behavior, it should stay in `adapter/`, `cards/`, `routing/`, `webhooks/`, or `domain/`
+- `shared/` is not a dumping ground for business logic
+- menu policy, UI, webhook shaping, and orchestration should stay in their capability directories
+
+## Actual Runtime Flow
+
+```text
+application.bot.menu_v6
+  -> adapter/private-feishu-adapter.ts
+  -> routing/menu-route-service.ts
+  -> contact/contact-user-service.ts (only when route.userEnrichment requests it)
+  -> cards/notifier/menu-notifier.ts
+  -> cards/content/pending-card.ts
+  -> webhooks/menu-payload.ts
+  -> outbound HTTP request
+  -> cards/notifier/menu-notifier.ts
+  -> cards/content/result-card.ts
+```
+
+That is the live path today.
 
 ## Customization Map
 
-When this future structure exists, the edit map should be:
+Use this as the edit map:
 
-- change menu-event entry behavior: `adapter/`
+- change menu-event entry or orchestration: `adapter/`
 - change card appearance/content: `cards/content/`
-- change card delivery rules: `cards/notifier/`
-- add future card button handling: `cards/actions/`
-- change route resolution or dedup: `routing/`
-- change webhook payloads or HTTP behavior: `webhooks/`
-- change shared types and flow contracts: `domain/`
-- change generic helper behavior: `shared/`
+- change card delivery behavior: `cards/notifier/`
+- add future card callback parsing: `cards/actions/`
+- change Contact lookup behavior: `contact/`
+- change route parsing or route resolution: `routing/`
+- change webhook payload body: `webhooks/`
+- change shared event contracts: `domain/`
+- change low-level helpers only: `shared/`
 
-This is the main reason for the proposed split. A future editor should not need to rediscover the architecture by reading several files first.
+## Future Extensions
 
-## Future Card Button Interaction Flow
+These are still planned, not implemented yet:
 
-The current system sends cards but does not yet implement follow-up interactions on those cards.
+- `adapter/menu-action-controller.ts`
+- `domain/menu-flow.ts`
+- `webhooks/menu-webhook-client.ts`
 
-When button-based interactions are added later, the flow should be:
-
-1. Feishu callback enters through `adapter/`
-2. the callback payload is parsed in `cards/actions/`
-3. the callback is translated into a domain-level intent
-4. the intent is passed to orchestration logic in `adapter/menu-action-controller.ts` or equivalent adapter-owned flow control
-5. any new card rendering still comes from `cards/content/`
-6. any message delivery still goes through `cards/notifier/`
-7. any network call still goes through `webhooks/`
-
-This avoids three failure modes:
-
-- card UI code making routing decisions
-- callback parsing code directly constructing webhook payloads
-- adapter code accumulating presentation logic
-
-## Why This Approach Is Recommended
-
-Alternative structures are possible, but this one is the best fit for the current private Feishu layer.
-
-Why not keep it mostly flat:
-
-- small now, but poor discoverability later
-- no explicit home for future interactive cards
-
-Why not split by flow stage like `receive/`, `dispatch/`, `respond/`:
-
-- that reads well as a pipeline
-- but it hides the actual customization seams
-- card content and card delivery would still be mixed conceptually
-
-Why capability-oriented is better:
-
-- UI customization becomes obvious
-- route logic stays isolated
-- webhook concerns stay isolated
-- future button interactions have a clear home
-
-## Scope Of This Proposal
-
-This document does not do any of the following:
-
-- move current files
-- add new imports
-- change runtime logic
-- add interactive card features
-- add new webhook behavior
-
-It is only the target architecture proposal for a future refactor.
-
-## Practical Rule For Today
-
-Until the refactor happens, the current files still own the live behavior:
-
-- `private-feishu-adapter.ts` is still the event entrypoint
-- `menu-notifier.ts` is still the current card delivery and content file
-- `menu-route-service.ts` is still the current routing file
-- `menu-payload.ts` is still the current webhook payload file
-
-Use this document as the placement guide for the next cleanup pass, not as a statement that the reorganization already exists.
+Those should be added only when the corresponding behavior actually exists. The current structure already leaves a clear home for them.

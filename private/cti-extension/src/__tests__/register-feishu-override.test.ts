@@ -64,7 +64,7 @@ function expectOverrideScenario(): OverrideScenario {
     await import('${upstreamFeishuAdapterImport}');
 
     const before = createAdapter('feishu');
-    const { registerFeishuOverride } = await import('./src/feishu/register-feishu-override.ts');
+    const { registerFeishuOverride } = await import('./src/feishu/adapter/register-feishu-override.ts');
 
     registerFeishuOverride();
 
@@ -106,7 +106,7 @@ function expectHostApiScenario() {
       },
     };
 
-    const { registerFeishuOverride } = await import('./src/feishu/register-feishu-override.ts');
+    const { registerFeishuOverride } = await import('./src/feishu/adapter/register-feishu-override.ts');
     registerFeishuOverride();
 
     process.stdout.write(JSON.stringify({

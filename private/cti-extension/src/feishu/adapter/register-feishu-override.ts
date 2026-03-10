@@ -1,4 +1,4 @@
-import { registerAdapterFactory as fallbackRegisterAdapterFactory } from '../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/channel-adapter.js';
+import { registerAdapterFactory as fallbackRegisterAdapterFactory } from '../../../../../Claude-to-IM-skill/node_modules/claude-to-im/dist/lib/bridge/channel-adapter.js';
 
 import { PrivateFeishuAdapter } from './private-feishu-adapter.js';
 
