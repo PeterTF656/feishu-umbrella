@@ -1,0 +1,14 @@
+{
+  "event_id": "evt-smoke-001",
+  "event_key": "launch",
+  "tenant_key": "tenant-smoke",
+  "timestamp": 1700000000000,
+  "operator": {
+    "operator_name": "Smoke Tester",
+    "operator_id": {
+      "open_id": "ou_smoke",
+      "user_id": "user_smoke",
+      "union_id": "union_smoke"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@feishu-umbrella/cti-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private Feishu extension package for Claude-to-IM customizations",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test --import tsx src/__tests__/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -4,6 +4,10 @@
 
 Edit files in the parent repo by default. Treat both submodules as read-only unless you intentionally need to update one of the forked projects.
 
+Primary architecture reference:
+
+- `docs/architecture/private-umbrella-architecture.md`
+
 ## Private Work
 
 Keep private integration files in parent-level directories such as:
@@ -13,6 +17,22 @@ Keep private integration files in parent-level directories such as:
 - `scripts/`
 
 These files belong to `feishu-umbrella`, not to either child repo.
+
+## Production Entry Point
+
+Use one supported production entry point only:
+
+- macOS or Linux: `bash private/runtime/bridge.sh ...`
+- Windows: `powershell -ExecutionPolicy Bypass -File .\private\runtime\bridge.ps1 ...`
+
+Those wrappers are responsible for:
+
+- building `private/cti-extension` when needed
+- setting `CTI_PRIVATE_EXTENSION_ENTRY`
+- setting `CTI_PRIVATE_MENU_ROUTE_FILE`
+- delegating to the skill daemon scripts
+
+Raw `Claude-to-IM-skill/scripts/daemon.*` commands are development-only. Do not use them directly for production service operations because they bypass the umbrella-owned private extension wiring.
 
 ## Working With Submodules
 

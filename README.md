@@ -27,6 +27,11 @@ git -C Claude-to-IM status -sb
 git -C Claude-to-IM-skill status -sb
 ```
 
+## Documentation
+
+- [Umbrella Architecture](docs/architecture/private-umbrella-architecture.md)
+- [Workflow](WORKFLOW.md)
+
 ## Publishing
 
 This repo is initialized locally. To publish it as a private GitHub repo later, create an empty private repository and push this parent repo to it.
